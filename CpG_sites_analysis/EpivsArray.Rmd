@@ -1,0 +1,765 @@
+---
+title: "CpG Sites Analysis - Comparing EpiFinder to Illumina MethylationEPIC 850K Array"
+author: "Zoe dell'Osso"
+date: "March 2026"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: tango
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE, message = FALSE, warning = FALSE)
+```
+
+---
+
+# 1. QC and Processing
+
+## 1.1 QC Epigenica data using BAM files
+
+```{bash}
+# To get a fingerprint with input, MBD in house, CXXC, MBD commercial for D1 S1
+plotFingerprint \
+  -b *Donor1_S1*.bam \
+  --labels INPUT MBD_in_house CXXC MBD_commercial \
+  --minMappingQuality 30 \
+  --skipZeros \
+  -T "QC: Donor 1 sample 1" \
+  -o fingerprint_qc.png
+
+# To generate heatmap using all samples
+multiBamSummary bins \
+    --bamfiles *.bam \
+    -o readCounts.npz \
+    --outRawCounts readCounts.txt \
+    --numberOfProcessors max
+
+# To generate spearman correlation using all samples
+plotCorrelation \
+  -in readCounts.npz \
+  --corMethod spearman \
+  --whatToPlot heatmap \
+  --plotTitle "Spearman Correlation of Samples" \
+  -o heatmap_correlation.png \
+  --colorMap RdYlBu
+
+# To generate the PCA plot using all samples
+plotPCA \
+    -in readCounts.npz \
+    -o plot_PCA.png \
+    --plotTitle "PCA Plot"
+```
+
+## 1.2 QC EPIC Array data using beta values with Quantile normalization
+
+```{r array-qc}
+# Illumina EPIC array data processing
+
+# Load library
+library(minfi)
+
+# Creating a path to the folder that has the Illumina data
+input_dir <- "/home/ubuntu/Illumina_850k_DNAmethylation_data_donors/data/"
+
+# Creating a data frame from sample information
+targets <- read.metharray.sheet(input_dir)
+
+# Load raw methylation data into R
+rgSet <- read.metharray.exp(base = input_dir)
+
+# Normalize the data with Quantile
+mSet_Qunorm <- preprocessQuantile(rgSet)
+
+# Create matrix with beta values for CpG sites
+beta_norQuat <- getBeta(mSet_Qunorm)
+
+# Change column names
+colnames(beta_norQuat) <- targets$Sample_Name
+
+# View name of columns and data
+head(beta_norQuat)
+
+# Changing to a data frame
+beta_norQuat <- as.data.frame(beta_norQuat)
+
+# Adding ProbeIDs as a column
+beta_norQuat$ProbeIDs <- rownames(beta_norQuat)
+# 865859 rows
+
+# Generating QC plots
+
+# Plot density of Beta-values and save as a PNG
+png("Beta_Density_Plot.png", width = 800, height = 600)
+densityPlot(beta_norQuat, main = "Beta Value Density Plot")
+dev.off()
+
+# Creating a MDS plot and saving as a PNG
+png("Beta_MDS_Plot.png", width = 800, height = 600)
+mdsPlot(beta_norQuat, numPositions = 1000, sampGroups = NULL, main = "MDS Plot (Beta Matrix)")
+dev.off()
+```
+
+**Output — head(beta_norQuat):**
+
+```
+                  D1        D2        D3        D4
+cg14817997 0.7716823 0.7553782 0.7180083 0.6851830
+cg26928153 0.7736478 0.7795466 0.8260223 0.7816682
+cg16269199 0.6781921 0.6415911 0.6735047 0.5992393
+cg13869341 0.7041774 0.7547598 0.7692744 0.7448073
+cg14008030 0.5933294 0.6081829 0.6667299 0.6078450
+cg12045430 0.2765107 0.2849464 0.2787795 0.2900669
+```
+
+## 1.3 Beta values calculations for EPIC Array without normalization
+
+```{r beta-no-norm}
+# Load library
+library(minfi)
+
+# Beta values without normalization
+beta_NOnorm <- getBeta(rgSet)
+colnames(beta_NOnorm) <- targets$Sample_Name
+beta_NOnorm <- as.data.frame(beta_NOnorm)
+beta_NOnorm$ProbeIDs <- rownames(beta_NOnorm)
+
+# Identifying number of rows
+nrow(beta_NOnorm)
+# 866238
+```
+
+## 1.4 Epigenica data processing
+
+### Extracting reads for each EPIC Array 850K probe
+
+```{bash}
+# Extraction for M2
+multiBigwigSummary BED-file -b M2*.bw --BED EPIC.hg19.manifest3forIGV.bed \
+  -out results_D1_S1.npz --outRawCounts mbd_ih_with_probes.tab
+
+# Extraction for M3
+multiBigwigSummary BED-file -b M3*.bw --BED EPIC.hg19.manifest3forIGV.bed \
+  -out results_cxxc_all.npz --outRawCounts Cxxc_with_probes.tab
+
+# Extraction for M4
+multiBigwigSummary BED-file -b M4*.bw --BED EPIC.hg19.manifest3forIGV.bed \
+  -out results_M4_all.npz --outRawCounts mdb_co_with_probes.tab
+
+# All had the same bin number of 865906
+
+# Merging M2 & M3
+cut -f4-16 Cxxc_with_probes.tab | paste mbd_ih_with_probes.tab - > mbdih_cxxc_probes.tsv
+
+# Merging M3 & M4
+cut -f4-16 Cxxc_with_probes.tab | paste mdb_co_with_probes.tab - > mbdco_cxxc_probes.tsv
+```
+
+### Inputting Epigenica processed data into R
+
+```{r input-epigenica}
+# Creating column names
+Columnnames_mbd <- c("chr", "start", "end",
+                     "MBD_D1_R1", "MBD_D1_R2",
+                     "MBD_D2_R1", "MBD_D2_R2",
+                     "MBD_D3_R1", "MBD_D3_R2",
+                     "MBD_D4_R1", "MBD_D4_R2",
+                     "Cxxc_D1_R1", "Cxxc_D1_R2",
+                     "Cxxc_D2_R1", "Cxxc_D2_R2",
+                     "Cxxc_D3_R1", "Cxxc_D3_R2",
+                     "Cxxc_D4_R1", "Cxxc_D4_R2")
+
+# Inputting the TSV as a data frame for in house
+MBDIH_Cxxc <- read.table("mbdih_cxxc_probes.tsv", sep = "\t",
+                          header = FALSE, col.names = Columnnames_mbd)
+
+# Inputting the TSV as a data frame for commercial
+MBDCO_Cxxc <- read.table("mbdco_cxxc_probes.tsv", sep = "\t",
+                          header = FALSE, col.names = Columnnames_mbd)
+
+# Changing chromosome location to Illumina probes and adding ProbeIDs
+columnnames_bedfile <- c("chr", "start", "end", "ProbeIDs")
+Probes_location <- read.table("EPIC.hg19.manifest3forIGV.bed", sep = "\t",
+                               header = FALSE, col.names = columnnames_bedfile)
+
+# 1. MBD in house & CXXC
+# Merge data frames based on the three location columns
+MBDIH_Cxxc_with_IDs <- merge(Probes_location, MBDIH_Cxxc, by = c("chr", "start", "end"))
+# Remove the coordinate columns
+MBDIH_final <- MBDIH_Cxxc_with_IDs[, !(names(MBDIH_Cxxc_with_IDs) %in% c("chr", "start", "end"))]
+# number of rows = 865906
+
+# 2. MBD commercial & CXXC
+# Merge data frames based on the three location columns
+MBDCO_Cxxc_with_IDs <- merge(Probes_location, MBDCO_Cxxc, by = c("chr", "start", "end"))
+# Remove the coordinate columns
+MBDCO_final <- MBDCO_Cxxc_with_IDs[, !(names(MBDCO_Cxxc_with_IDs) %in% c("chr", "start", "end"))]
+# number of rows = 865906
+```
+
+---
+
+# 2. M value analysis
+
+## 2.1 Histogram — M values without any filtering or normalization
+
+```{r m-values-no-norm}
+# Load libraries
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(DMRcate)
+library(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
+
+# Merging the D1 values from Epi IH and array D1
+M_value_df_NOnorm <- MBDIH_final[, c("ProbeIDs", "MBD_D1_R1", "Cxxc_D1_R1")]
+M_value_df_NOnorm <- M_value_df_NOnorm %>%
+  left_join(beta_NOnorm %>% select(ProbeIDs, D1), by = "ProbeIDs")
+
+# Calculating the M value for array
+M_value_df_NOnorm$M_values_Ill <- log2(M_value_df_NOnorm$D1 / (1 - M_value_df_NOnorm$D1))
+
+# Calculating the M value for Epigenica data MBD IH
+lib_ratio <- sum(M_value_df_NOnorm$MBD_D1_R1) / sum(M_value_df_NOnorm$Cxxc_D1_R1)
+M_value_df_NOnorm$M_value_Epi <- log2(
+  (M_value_df_NOnorm$MBD_D1_R1 + 1) /
+  ((M_value_df_NOnorm$Cxxc_D1_R1 * lib_ratio) + 1))
+
+# View results
+head(M_value_df_NOnorm)
+
+# Set a seed so random results are reproducible
+set.seed(67)
+
+# Creating df for 150 random probes
+M_value_df_NOnorm_150probes <- M_value_df_NOnorm %>%
+  slice_sample(n = 150) %>%
+  select(M_values_Ill, M_value_Epi) %>%
+  mutate(RowNumber = row_number()) %>%
+  pivot_longer(cols = c(M_values_Ill, M_value_Epi),
+               names_to  = "Source",
+               values_to = "Intensity") %>%
+  mutate(Source = recode(Source,
+                         "M_values_Ill" = "Ill",
+                         "M_value_Epi"  = "Epi IH"))
+
+# Plotting the histogram
+hist_M_values_NOnorm <- ggplot(M_value_df_NOnorm_150probes,
+                                aes(x = RowNumber, y = Intensity, fill = Source)) +
+  geom_col(position = "identity", alpha = 0.6) +
+  scale_fill_manual(values = c("Ill" = "#F8766D", "Epi IH" = "#619CFF"),
+                    name = "Technology") +
+  theme_minimal() +
+  labs(title = "M-Values for 150 Probes",
+       x = "CpG Site",
+       y = "M-Value Intensity")
+
+ggsave("Histogram_Mvalues_NOnorm_150probes.png",
+       plot = hist_M_values_NOnorm, width = 10, height = 6, dpi = 300)
+```
+
+**Output — head(M_value_df_NOnorm):**
+
+```
+    ProbeIDs MBD_D1_R1 Cxxc_D1_R1        D1 M_values_Ill M_value_Epi
+1 cg19251656  0.000000          1 0.5859689    0.5010852  -0.5580252
+2 cg06383512  2.000000          1 0.6634173    0.9789555   1.0269373
+3 cg14071171  7.000000          1 0.7418642    1.5230246   2.4419748
+4 cg23599391  1.666667          0 0.7384615    1.4974997   1.4150375
+5 cg10841437  0.000000          1 0.3293142   -1.0261721  -0.5580252
+6 cg06838840  0.000000          2 0.7875618    1.8903498  -0.9594031
+```
+
+## 2.2 Spearman Ranked correlation — M values without filtering or normalization
+
+```{r spearman-no-norm}
+correlation_Mval_NOnorm <- cor(M_value_df_NOnorm$M_values_Ill,
+                                M_value_df_NOnorm$M_value_Epi,
+                                method = "spearman",
+                                use    = "complete.obs")
+print(correlation_Mval_NOnorm)
+# 0.5988374
+```
+
+## 2.3 Histogram — M values with Quantile normalization
+
+```{r m-values-qunorm}
+# Merging the D1 values from Epi IH and array D1
+M_value_df_Qunorm <- MBDIH_final[, c("ProbeIDs", "MBD_D1_R1", "Cxxc_D1_R1")]
+M_value_df_Qunorm <- M_value_df_Qunorm %>%
+  left_join(beta_norQuat %>% select(ProbeIDs, D1), by = "ProbeIDs")
+
+# Calculating the M value for array
+M_value_df_Qunorm$M_values_Ill <- log2(M_value_df_Qunorm$D1 / (1 - M_value_df_Qunorm$D1))
+
+# Calculating the M value for Epigenica data MBD IH
+lib_ratio <- sum(M_value_df_Qunorm$MBD_D1_R1) / sum(M_value_df_Qunorm$Cxxc_D1_R1)
+M_value_df_Qunorm$M_value_Epi <- log2(
+  (M_value_df_Qunorm$MBD_D1_R1 + 1) /
+  ((M_value_df_Qunorm$Cxxc_D1_R1 * lib_ratio) + 1))
+
+# View results
+head(M_value_df_Qunorm)
+
+# Set a seed so random results are reproducible
+set.seed(67)
+
+# Creating df for 150 random probes
+M_value_df_Qunorm_150probes <- M_value_df_Qunorm %>%
+  slice_sample(n = 150) %>%
+  select(M_values_Ill, M_value_Epi) %>%
+  mutate(RowNumber = row_number()) %>%
+  pivot_longer(cols = c(M_values_Ill, M_value_Epi),
+               names_to  = "Source",
+               values_to = "Intensity") %>%
+  mutate(Source = recode(Source,
+                         "M_values_Ill" = "Ill",
+                         "M_value_Epi"  = "Epi IH"))
+
+# Plotting the histogram
+hist_M_values_Qunorm <- ggplot(M_value_df_Qunorm_150probes,
+                                aes(x = RowNumber, y = Intensity, fill = Source)) +
+  geom_col(position = "identity", alpha = 0.6) +
+  scale_fill_manual(values = c("Ill" = "#F8766D", "Epi IH" = "#619CFF"),
+                    name = "Technology") +
+  theme_minimal() +
+  labs(title = "M-Values for 150 Probes",
+       x = "CpG Site",
+       y = "M-Value Intensity")
+
+ggsave("Histogram_Mvalues_Qunorm_150probes.png",
+       plot = hist_M_values_Qunorm, width = 10, height = 6, dpi = 300)
+```
+
+**Output — head(M_value_df_Qunorm):**
+
+```
+    ProbeIDs MBD_D1_R1 Cxxc_D1_R1        D1 M_values_Ill M_value_Epi
+1 cg19251656  0.000000          1 0.5938438    0.5480491  -0.5580252
+2 cg06383512  2.000000          1 0.6787592    1.0792449   1.0269373
+3 cg14071171  7.000000          1 0.7575530    1.6436776   2.4419748
+4 cg23599391  1.666667          0 0.7513807    1.5956057   1.4150375
+5 cg10841437  0.000000          1 0.3233789   -1.0651224  -0.5580252
+6 cg06838840  0.000000          2 0.7995882    1.9962900  -0.9594031
+```
+
+## 2.4 Spearman Ranked correlation — M Values with Quantile Normalization
+
+```{r spearman-qunorm}
+correlation_Mval_Qunorm <- cor(M_value_df_Qunorm$M_values_Ill,
+                                M_value_df_Qunorm$M_value_Epi,
+                                method = "spearman",
+                                use    = "complete.obs")
+print(correlation_Mval_Qunorm)
+# 0.5798922
+```
+
+## 2.5 Bland–Altman plot with M values
+
+Lin's Concordance Correlation Coefficient (CCC) measures how well two variables agree with each other.
+
+```{r bland-altman}
+# Calculating Lin's concordance correlation coefficient (CCC)
+calculate_ccc <- function(x, y) {
+  mu_x <- mean(x, na.rm = TRUE)
+  mu_y <- mean(y, na.rm = TRUE)
+  s2_x <- var(x, na.rm = TRUE)
+  s2_y <- var(y, na.rm = TRUE)
+  s_xy <- cov(x, y, use = "complete.obs")
+  ccc  <- (2 * s_xy) / (s2_x + s2_y + (mu_x - mu_y)^2)
+  return(ccc)
+}
+
+ccc_val   <- calculate_ccc(M_value_df_Qunorm$M_values_Ill, M_value_df_Qunorm$M_value_Epi)
+ccc_label <- paste("CCC =", round(ccc_val, 4))
+print(ccc_label)
+# CCC = 0.6397 — as the value is <0.9, the strength of agreement is weak.
+
+# Subsample of 5K probes (800K is too many for a standard plot)
+set.seed(123)
+idx    <- sample(1:nrow(M_value_df_Qunorm), 5000)
+df_sub <- M_value_df_Qunorm[idx, ]
+
+# Plotting Bland-Altman plot
+png("M_values_Ill_vs_M_values_Epi_Agreement.png", width = 800, height = 800, res = 120)
+
+plot(df_sub$M_values_Ill, df_sub$M_value_Epi,
+     main = "Agreement: Ill vs Epi using M values (Subsampled n=5000)",
+     xlab = "Ill Intensity",
+     ylab = "Epi Intensity",
+     pch  = 16,
+     col  = rgb(0.2, 0.4, 0.6, 0.2),
+     xlim = c(-8, 8),
+     ylim = c(-8, 8))
+
+# Adding line of agreement and legend with CCC value
+abline(0, 1, col = "red", lwd = 2, lty = 2)
+legend("topleft", legend = ccc_label, bty = "n", cex = 1.2, text.font = 2)
+dev.off()
+```
+
+---
+
+# 3. Beta values analysis
+
+## 3.1 Calculating beta values for all donors and replicates
+
+### In House
+
+```{r beta-inhouse}
+# Donor 1 Replicate 1
+MBDIH_final$Beta_D1_R1 <- MBDIH_final$MBD_D1_R1 / (MBDIH_final$MBD_D1_R1 + MBDIH_final$Cxxc_D1_R1)
+
+# Donor 1 Replicate 2
+MBDIH_final$Beta_D1_R2 <- MBDIH_final$MBD_D1_R2 / (MBDIH_final$MBD_D1_R2 + MBDIH_final$Cxxc_D1_R2)
+
+# Donor 2 Replicate 1
+MBDIH_final$Beta_D2_R1 <- MBDIH_final$MBD_D2_R1 / (MBDIH_final$MBD_D2_R1 + MBDIH_final$Cxxc_D2_R1)
+
+# Donor 2 Replicate 2
+MBDIH_final$Beta_D2_R2 <- MBDIH_final$MBD_D2_R2 / (MBDIH_final$MBD_D2_R2 + MBDIH_final$Cxxc_D2_R2)
+
+# Donor 3 Replicate 1
+MBDIH_final$Beta_D3_R1 <- MBDIH_final$MBD_D3_R1 / (MBDIH_final$MBD_D3_R1 + MBDIH_final$Cxxc_D3_R1)
+
+# Donor 3 Replicate 2
+MBDIH_final$Beta_D3_R2 <- MBDIH_final$MBD_D3_R2 / (MBDIH_final$MBD_D3_R2 + MBDIH_final$Cxxc_D3_R2)
+
+# Donor 4 Replicate 1
+MBDIH_final$Beta_D4_R1 <- MBDIH_final$MBD_D4_R1 / (MBDIH_final$MBD_D4_R1 + MBDIH_final$Cxxc_D4_R1)
+
+# Donor 4 Replicate 2
+MBDIH_final$Beta_D4_R2 <- MBDIH_final$MBD_D4_R2 / (MBDIH_final$MBD_D4_R2 + MBDIH_final$Cxxc_D4_R2)
+
+# Copying Beta columns into a new data frame
+Betavalues_MBDIH <- MBDIH_final[, c("ProbeIDs",
+                                     "Beta_D1_R1", "Beta_D1_R2",
+                                     "Beta_D2_R1", "Beta_D2_R2",
+                                     "Beta_D3_R1", "Beta_D3_R2",
+                                     "Beta_D4_R1", "Beta_D4_R2")]
+nrow(Betavalues_MBDIH)
+# 865906 rows
+
+# Delete rows with NaN (no reads captured by either MBD or CXXC)
+Betavalues_MBDIH <- na.omit(Betavalues_MBDIH)
+# After deleting: 264914 rows left
+```
+
+### Commercial
+
+```{r beta-commercial}
+# Donor 1 Replicate 1
+MBDCO_final$Beta_D1_R1 <- MBDCO_final$MBD_D1_R1 / (MBDCO_final$MBD_D1_R1 + MBDCO_final$Cxxc_D1_R1)
+
+# Donor 1 Replicate 2
+MBDCO_final$Beta_D1_R2 <- MBDCO_final$MBD_D1_R2 / (MBDCO_final$MBD_D1_R2 + MBDCO_final$Cxxc_D1_R2)
+
+# Donor 2 Replicate 1
+MBDCO_final$Beta_D2_R1 <- MBDCO_final$MBD_D2_R1 / (MBDCO_final$MBD_D2_R1 + MBDCO_final$Cxxc_D2_R1)
+
+# Donor 2 Replicate 2
+MBDCO_final$Beta_D2_R2 <- MBDCO_final$MBD_D2_R2 / (MBDCO_final$MBD_D2_R2 + MBDCO_final$Cxxc_D2_R2)
+
+# Donor 3 Replicate 1
+MBDCO_final$Beta_D3_R1 <- MBDCO_final$MBD_D3_R1 / (MBDCO_final$MBD_D3_R1 + MBDCO_final$Cxxc_D3_R1)
+
+# Donor 3 Replicate 2
+MBDCO_final$Beta_D3_R2 <- MBDCO_final$MBD_D3_R2 / (MBDCO_final$MBD_D3_R2 + MBDCO_final$Cxxc_D3_R2)
+
+# Donor 4 Replicate 1
+MBDCO_final$Beta_D4_R1 <- MBDCO_final$MBD_D4_R1 / (MBDCO_final$MBD_D4_R1 + MBDCO_final$Cxxc_D4_R1)
+
+# Donor 4 Replicate 2
+MBDCO_final$Beta_D4_R2 <- MBDCO_final$MBD_D4_R2 / (MBDCO_final$MBD_D4_R2 + MBDCO_final$Cxxc_D4_R2)
+
+# Copying Beta columns into a new data frame
+Betavalues_MBDCO <- MBDCO_final[, c("ProbeIDs",
+                                     "Beta_D1_R1", "Beta_D1_R2",
+                                     "Beta_D2_R1", "Beta_D2_R2",
+                                     "Beta_D3_R1", "Beta_D3_R2",
+                                     "Beta_D4_R1", "Beta_D4_R2")]
+nrow(Betavalues_MBDCO)
+# 865906 rows
+
+# Delete rows with NaN (no reads captured by either MBD or CXXC)
+Betavalues_MBDCO <- na.omit(Betavalues_MBDCO)
+# After deleting: 366135 rows left
+```
+
+---
+
+# 4. Comparison using ATB samples
+
+## 4.1 Calculating delta beta
+
+```{r delta-beta}
+# Calculate average beta value per donor — MBD In House
+Betavalues_MBDIH$Average_D1 <- (Betavalues_MBDIH$Beta_D1_R1 + Betavalues_MBDIH$Beta_D1_R2) / 2
+Betavalues_MBDIH$Average_D2 <- (Betavalues_MBDIH$Beta_D2_R1 + Betavalues_MBDIH$Beta_D2_R2) / 2
+Betavalues_MBDIH$Average_D3 <- (Betavalues_MBDIH$Beta_D3_R1 + Betavalues_MBDIH$Beta_D3_R2) / 2
+Betavalues_MBDIH$Average_D4 <- (Betavalues_MBDIH$Beta_D4_R1 + Betavalues_MBDIH$Beta_D4_R2) / 2
+
+# Average for all donors
+Betavalues_MBDIH$Average_all <- rowMeans(Betavalues_MBDIH[, c("Average_D1", "Average_D2",
+                                                                "Average_D3", "Average_D4")])
+
+# Calculate average beta value per donor — MBD Commercial
+Betavalues_MBDCO$Average_D1 <- (Betavalues_MBDCO$Beta_D1_R1 + Betavalues_MBDCO$Beta_D1_R2) / 2
+Betavalues_MBDCO$Average_D2 <- (Betavalues_MBDCO$Beta_D2_R1 + Betavalues_MBDCO$Beta_D2_R2) / 2
+Betavalues_MBDCO$Average_D3 <- (Betavalues_MBDCO$Beta_D3_R1 + Betavalues_MBDCO$Beta_D3_R2) / 2
+Betavalues_MBDCO$Average_D4 <- (Betavalues_MBDCO$Beta_D4_R1 + Betavalues_MBDCO$Beta_D4_R2) / 2
+
+# Average for all donors
+Betavalues_MBDCO$Average_all <- rowMeans(Betavalues_MBDCO[, c("Average_D1", "Average_D2",
+                                                                "Average_D3", "Average_D4")])
+
+# Create tables with average Epi beta values
+Avg_BV_MBDIH <- Betavalues_MBDIH[, c("ProbeIDs", "Average_all")]
+Avg_BV_MBDCO <- Betavalues_MBDCO[, c("ProbeIDs", "Average_all")]
+
+# Adding the ATB beta values
+ATB_data <- read.csv("2026-02-02_beta_values.csv")
+
+# Calculate average beta value across all ATB donors for all probes
+ATB_data$Avg_BV_ATB <- rowMeans(ATB_data[, c("ATB1", "ATB2", "ATB3", "ATB4", "ATB5",
+                                               "ATB6", "ATB7", "ATB8", "ATB9", "ATB10")])
+
+# Rename probe column on ATB data frame
+names(ATB_data)[1] <- "ProbeIDs"
+
+# Merging beta values for IH
+EpiIH_ATB <- merge(Avg_BV_MBDIH,
+                   ATB_data[, c("ProbeIDs", "Avg_BV_ATB")],
+                   by = "ProbeIDs")
+
+# Merging beta values for CO
+EpiCO_ATB <- merge(Avg_BV_MBDCO,
+                   ATB_data[, c("ProbeIDs", "Avg_BV_ATB")],
+                   by = "ProbeIDs")
+
+# DeltaB for Epi IH
+EpiIH_ATB$deltaB_IH <- EpiIH_ATB$Avg_BV_ATB - EpiIH_ATB$Average_all
+
+# DeltaB for Epi CO
+EpiCO_ATB$deltaB_CO <- EpiCO_ATB$Avg_BV_ATB - EpiCO_ATB$Average_all
+
+# Calculate average beta values for all Illumina donors
+beta$Avg_BV_ill <- rowMeans(beta[, c("D1", "D2", "D3", "D4")])
+
+# Merge average beta values from Illumina and ATB
+ill_ATB <- merge(beta[, c("Avg_BV_ill", "ProbeIDs")],
+                 ATB_data[, c("ProbeIDs", "Avg_BV_ATB")],
+                 by = "ProbeIDs")
+
+# Calculating delta B for ATB vs Illumina
+ill_ATB$deltaB_ill <- ill_ATB$Avg_BV_ATB - ill_ATB$Avg_BV_ill
+
+# Saving the data
+saveRDS(ill_ATB, file = "ill_ATB_results.rds")
+
+# Inputting the CSV file with top delta B values from study
+DeltaB_study <- read.csv("deltaB_study.csv")
+colnames(DeltaB_study)[colnames(DeltaB_study) == "Probe_ID"] <- "ProbeIDs"
+
+# Merging delta B values from Illumina, Epi IH, and Epi CO
+list_of_dfs <- list(
+  ill_ATB[, c("ProbeIDs", "deltaB_ill")],
+  EpiIH_ATB[, c("ProbeIDs", "deltaB_IH")],
+  EpiCO_ATB[, c("ProbeIDs", "deltaB_CO")],
+  DeltaB_study[, c("ProbeIDs", "deltaBeta")])
+
+# Using Reduce to merge the entire list
+Top_dmrs_deltaB <- Reduce(function(x, y) merge(x, y, by = "ProbeIDs"), list_of_dfs)
+
+# Check number of rows
+nrow(Top_dmrs_deltaB)
+# 198 rows
+```
+
+## 4.2 PCA plot with all donors and all probe sites
+
+```{r pca-all-donors}
+# Merge the data
+full_bvalue_list <- list(
+  Beta_ill[, c("D1", "D2", "D3", "D4", "ProbeIDs")],
+  Betavalues_MBDIH[, c("Beta_D1_R1", "Beta_D1_R2", "Beta_D2_R1", "Beta_D2_R2",
+                        "Beta_D3_R1", "Beta_D3_R2", "Beta_D4_R1", "Beta_D4_R2", "ProbeIDs")],
+  Betavalues_MBDCO[, c("Beta_D1_R1", "Beta_D1_R2", "Beta_D2_R1", "Beta_D2_R2",
+                        "Beta_D3_R1", "Beta_D3_R2", "Beta_D4_R1", "Beta_D4_R2", "ProbeIDs")],
+  ATB_data[, c("ATB1", "ATB2", "ATB3", "ATB4", "ATB5", "ATB6", "ATB7", "ATB8", "ATB9", "ATB10",
+               "CON1", "CON2", "CON3", "CON4", "CON5", "ProbeIDs")]
+)
+
+# Using reduce function to merge data frames
+All_Bvalues <- Reduce(function(x, y) merge(x, y, by = "ProbeIDs"), full_bvalue_list)
+
+# Making ProbeIDs the row names
+rownames(All_Bvalues)  <- All_Bvalues$ProbeIDs
+Matrix_Bvalues <- All_Bvalues[, -which(names(All_Bvalues) == "ProbeIDs")]
+
+# Generating PCA
+pca_matrix_BV  <- t(Matrix_Bvalues)
+Pca_results_BV <- prcomp(pca_matrix_BV, scale = TRUE)
+summary(Pca_results_BV)
+
+# Load library
+library(ggplot2)
+
+# Converting PCA results into a data frame for plotting
+pca_df_BV <- as.data.frame(Pca_results_BV$x)
+pca_df_BV$Sample <- rownames(pca_df_BV)
+
+# Creating groups for legend
+pca_df_BV$Group[grepl("D[1-4]", pca_df_BV$Sample)]  <- "Illumina"
+pca_df_BV$Group[grepl(".x",     pca_df_BV$Sample)]   <- "Epi_IH"
+pca_df_BV$Group[grepl(".y",     pca_df_BV$Sample)]   <- "Epi_CO"
+pca_df_BV$Group[grepl("ATB",    pca_df_BV$Sample)]   <- "ATB"
+pca_df_BV$Group[grepl("CON",    pca_df_BV$Sample)]   <- "CON"
+
+png("PCA_Plot_Bvalues_All_Samples.png", width = 800, height = 600)
+
+ggplot(pca_df_BV, aes(x = PC1, y = PC2, color = Group)) +
+  geom_point(size = 4) +
+  theme_minimal() +
+  scale_color_brewer(palette = "Set1") +
+  labs(
+    title = "PCA Plot: Beta Values by Sample Type",
+    x     = paste0("PC1 (", round(summary(Pca_results_BV)$importance[2, 1] * 100, 1), "%)"),
+    y     = paste0("PC2 (", round(summary(Pca_results_BV)$importance[2, 2] * 100, 1), "%)"),
+    color = "Sample Type"
+  )
+
+dev.off()
+```
+
+## 4.3 Correlation matrix
+
+```{r correlation-matrix}
+cd_top_dmr_deltaB <- na.omit(Top_dmrs_deltaB)
+
+# Select only the numeric delta B columns
+numeric_cols <- cd_top_dmr_deltaB[, c("deltaB_ill", "deltaB_IH", "deltaB_CO", "deltaBeta")]
+
+# Calculate the Spearman correlation matrix
+cor_matrix <- cor(numeric_cols, method = "spearman", use = "pairwise.complete.obs")
+print(cor_matrix)
+
+# Making the matrix plot
+library(ggplot2)
+library(reshape2)
+
+# Melt the correlation matrix
+melted_corr <- melt(cor_matrix)
+
+# Create the heatmap
+p_melted <- ggplot(data = melted_corr, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient2(low      = "blue",
+                       high     = "red",
+                       mid      = "white",
+                       midpoint = 0,
+                       limit    = c(-1, 1),
+                       space    = "Lab",
+                       name     = "Spearman\nCorrelation") +
+  theme_minimal() +
+  geom_text(aes(label = round(value, 2))) +
+  labs(title = "Methylation Correlation Matrix", x = "", y = "")
+
+# Save the image
+ggsave("Fixed_Correlation_matrix.png", plot = p_melted, width = 7, height = 7)
+```
+
+**Output — Correlation matrix:**
+
+```
+           deltaB_ill  deltaB_IH  deltaB_CO   deltaBeta
+deltaB_ill  1.00000000  0.4658454  0.3354381 -0.04468621
+deltaB_IH   0.46584545  1.0000000  0.5321246 -0.14873301
+deltaB_CO   0.33543814  0.5321246  1.0000000 -0.16798937
+deltaBeta  -0.04468621 -0.1487330 -0.1679894  1.00000000
+```
+
+## 4.4 Box plots for 7 CpG probe sites
+
+Probes: `cg11985470`, `cg13689801`, `cg20820894`, `cg23240473`, `cg27357902`, `cg07926542`, `cg20250935`
+
+```{r boxplots}
+# Rename MBDIH columns
+colnames(Betavalues_MBDIH)[10:14] <- paste0(colnames(Betavalues_MBDIH)[10:14], "_IH")
+
+# Rename MBDCO columns
+colnames(Betavalues_MBDCO)[10:14] <- paste0(colnames(Betavalues_MBDCO)[10:14], "_CO")
+
+# Create list for mega data frame
+megadf_bvalue_list <- list(
+  Beta_ill[, c("D1", "D2", "D3", "D4", "ProbeIDs")],
+  Betavalues_MBDIH[, c("ProbeIDs", "Average_D1_IH", "Average_D2_IH",
+                        "Average_D3_IH", "Average_D4_IH")],
+  Betavalues_MBDCO[, c("ProbeIDs", "Average_D1_CO", "Average_D2_CO",
+                        "Average_D3_CO", "Average_D4_CO")],
+  ATB_data[, c("ATB1", "ATB2", "ATB3", "ATB4", "ATB5", "ATB6", "ATB7", "ATB8",
+               "ATB9", "ATB10", "CON1", "CON2", "CON3", "CON4", "CON5", "ProbeIDs")]
+)
+
+# Merging the list by ProbeIDs
+Megadf_bvalue <- Reduce(function(x, y) merge(x, y, by = "ProbeIDs"), megadf_bvalue_list)
+
+# Load libraries
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+
+# Setup the output folder for box plots
+output_folder <- "Boxplot_Beta_DMCs"
+if (!dir.exists(output_folder)) dir.create(output_folder)
+
+# Define the probes to plot
+target_probes <- c("cg11985470", "cg13689801", "cg20820894",
+                   "cg23240473", "cg27357902", "cg07926542", "cg20250935")
+
+# Reshape data from wide to long and assign groups
+plot_data_bp <- Megadf_bvalue %>%
+  filter(ProbeIDs %in% target_probes) %>%
+  pivot_longer(cols = -ProbeIDs, names_to = "Sample", values_to = "Beta_Value") %>%
+  mutate(Group = case_when(
+    grepl("^D[1-4]$", Sample) ~ "ill",
+    grepl("_IH$",     Sample) ~ "Epi_IH",
+    grepl("_CO$",     Sample) ~ "Epi_CO",
+    grepl("ATB",      Sample) ~ "ATB",
+    grepl("CON",      Sample) ~ "Controls_study",
+    TRUE                      ~ "Other"
+  ))
+
+# Define color palette
+group_colors <- c(
+  "ATB"            = "#FF0000",
+  "ill"            = "#0000FF",
+  "Controls_study" = "#0000FF",
+  "Epi_IH"         = "#0000FF",
+  "Epi_CO"         = "#0000FF"
+)
+
+# Run the loop
+for (probe in target_probes) {
+
+  current_plot_data <- plot_data_bp %>% filter(ProbeIDs == probe)
+
+  p <- ggplot(current_plot_data, aes(x = Group, y = Beta_Value, fill = Group)) +
+    geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+    geom_jitter(width = 0.2, alpha = 0.4, color = "black") +
+    scale_fill_manual(values = group_colors) +
+    theme_minimal() +
+    labs(title = paste("Methylation Levels:", probe),
+         y     = "Beta Value",
+         x     = "Group") +
+    theme(axis.text.x    = element_text(angle = 45, hjust = 1),
+          legend.position = "none")
+
+  # Save the file
+  file_name <- paste0(output_folder, "/", probe, "_colored.png")
+  ggsave(filename = file_name, plot = p, width = 8, height = 6, dpi = 300)
+}
+```
