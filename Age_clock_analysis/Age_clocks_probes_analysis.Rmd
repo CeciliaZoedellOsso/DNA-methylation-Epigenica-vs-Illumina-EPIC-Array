@@ -1,0 +1,412 @@
+---
+title: "Age Clocks Probes Analysis"
+author: "Zoe dell'Osso"
+date: "March 2026"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: tango
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE, message = FALSE, warning = FALSE)
+```
+
+---
+
+# 1. Setup & Libraries
+
+```{r libraries}
+library(missMethyl)
+library(minfi)
+library(dplyr)
+```
+
+---
+
+# 2. Illumina Data Processing
+
+## Normalization of EPIC Array Data with Noob
+
+```{r noob-normalization}
+mSet <- preprocessNoob(rgSet)
+```
+
+## Calculate Beta Values from Normalized EPIC Array Data
+
+```{r beta-values}
+noob_beta <- getBeta(mSet)
+colnames(noob_beta) <- targets$Sample_Name
+noob_beta <- as.data.frame(noob_beta)
+noob_beta$ProbeIDs <- rownames(noob_beta)
+```
+
+## Calculate the Average Beta Value for Each Probe
+
+```{r avg-beta}
+noob_beta$Avg_beta <- rowMeans(noob_beta[, c("D1", "D2", "D3", "D4")])
+```
+
+---
+
+# 3. Significant Probes for Biological Age
+
+```{r load-ageclock-probes}
+ageclock_probes <- read.csv("epigenetic_age_clock_probes.csv")
+names(ageclock_probes)[1] <- "ProbeIDs"
+```
+
+## Merging
+
+```{r merge-data}
+clock_analysis_df <- ageclock_probes %>%
+  select(ProbeIDs) %>%
+  inner_join(noob_beta[, c("ProbeIDs", "Avg_beta")], by = "ProbeIDs") %>%
+  inner_join(Avg_BV_MBDCO[, c("ProbeIDs", "Average_all")], by = "ProbeIDs") %>%
+  inner_join(Avg_BV_MBDIH[, c("ProbeIDs", "Average_all")], by = "ProbeIDs")
+
+names(clock_analysis_df)[3] <- "Average_CO"
+names(clock_analysis_df)[4] <- "Average_IH"
+```
+
+---
+
+# 4. Confusion Matrix
+
+```{r confusion-matrix-libraries}
+# -- loading libraries --
+library(dplyr)
+library(tidyr)
+library(caret)
+library(ggplot2)
+library(caret)
+library(reshape2)
+```
+
+## In House
+
+```{r confusion-matrix}
+# creating the 10 different classes with 0.1 intervals between each
+my_breaks3 <- c(0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0)
+my_labels3 <- c("Class 1", "Class 2", "Class 3", "Class 4", "Class 5",
+                 "Class 6", "Class 7", "Class 8", "Class 9", "Class 10")
+
+# classifying the beta values into the 10 classes
+matrixdf_c10_clock_analysis_df_IH <- clock_analysis_df %>% mutate(Epi_Class = cut(Average_IH, breaks = my_breaks3, labels = my_labels3, include.lowest = TRUE), Illumina_Class = cut(Avg_beta, breaks = my_breaks3, labels = my_labels3, include.lowest = TRUE))
+
+# making confusion matrix
+conf_matrix_class10_clock_analysis_df_IH <- confusionMatrix(
+  data      = matrixdf_c10_clock_analysis_df_IH$Epi_Class,
+  reference = matrixdf_c10_clock_analysis_df_IH$Illumina_Class)
+
+# converting the confusion matrix table into a df
+plotdata_cm_class10_clock_analysis_df_IH <- as.data.frame(conf_matrix_class10_clock_analysis_df_IH$table)
+
+# plotting the confusion matrix
+plot_cm_class10_clock_analysis_df_IH <- ggplot(plotdata_cm_class10_clock_analysis_df_IH, aes(x = Prediction, y = Reference, fill = Freq)) + geom_tile(color = "white", lwd = 1) + geom_text(aes(label = Freq), color = "black", size = 3.5) + scale_fill_gradient(low = "#ebf3fb", high = "#3182bd") +  labs( x = "Epi IH", y = "Illumina", title = "Confusion Matrix: Epi IH vs Illumina", fill = "Count" ) + theme_minimal() + theme( axis.text = element_text (angle = 45, vjust = 1, hjust = 1), title = element_text(size = 14, face = "bold"), aspect.ratio = 1 )
+
+# saveing as a PNG
+ggsave("confusion_matrix_c10_clock_analysis_df_IH.png", plot = plot_cm_class10_clock_analysis_df_IH, width = 7, height = 6, dpi = 300)
+```
+
+## Commercial
+
+```{r confusion-matrix-CO}
+# creating the 10 different classes with 0.1 intervals between each
+my_breaks3 <- c(0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0)
+my_labels3 <- c("Class 1", "Class 2", "Class 3", "Class 4", "Class 5",
+                 "Class 6", "Class 7", "Class 8", "Class 9", "Class 10")
+
+# classifying the beta values into the 10 classes
+matrixdf_c10_clock_analysis_df_CO <- clock_analysis_df %>% mutate(Epi_Class = cut(Average_CO, breaks = my_breaks3, labels = my_labels3, include.lowest = TRUE), Illumina_Class = cut(Avg_beta, breaks = my_breaks3, labels = my_labels3, include.lowest = TRUE))
+
+# making confusion matrix
+conf_matrix_class10_clock_analysis_df_CO <- confusionMatrix(
+  data      = matrixdf_c10_clock_analysis_df_CO$Epi_Class,
+  reference = matrixdf_c10_clock_analysis_df_CO$Illumina_Class)
+
+# converting the confusion matrix table into a df
+plotdata_cm_class10_clock_analysis_df_CO <- as.data.frame(conf_matrix_class10_clock_analysis_df_CO$table)
+
+# plotting the confusion matrix
+plot_cm_class10_clock_analysis_df_CO <- ggplot(plotdata_cm_class10_clock_analysis_df_CO, aes(x = Prediction, y = Reference, fill = Freq)) + geom_tile(color = "white", lwd = 1) + geom_text(aes(label = Freq), color = "black", size = 3.5) + scale_fill_gradient(low = "#ebf3fb", high = "#3182bd") +  labs( x = "Epi CO", y = "Illumina", title = "Confusion Matrix: Epi CO vs Illumina", fill = "Count" ) + theme_minimal() + theme( axis.text = element_text (angle = 45, vjust = 1, hjust = 1), title = element_text(size = 14, face = "bold"), aspect.ratio = 1 )
+
+# saveing as a PNG
+ggsave("confusion_matrix_c10_clock_analysis_df_CO.png", plot = plot_cm_class10_clock_analysis_df_CO, width = 7, height = 6, dpi = 300)
+```
+
+---
+
+# 5. GO Enrichment Analysis on Misclassified Probes
+
+```{r go-libraries}
+library(dplyr)
+library(missMethyl)
+```
+
+## In House
+
+### Identify Misclassified Probes
+
+```{r misclassified-probes}
+misclassified_probes_df <- matrixdf_c10_clock_analysis_df_IH %>%
+  filter(Epi_Class != Illumina_Class)
+
+misclassified_ids <- misclassified_probes_df$ProbeIDs
+length(misclassified_ids)
+```
+
+**Output:** `1267`
+
+### Run GO Analysis Based on 17K Probes Associated with Age Clock
+
+```{r go-analysis}
+all_probes <- clock_analysis_df$ProbeIDs
+
+gst_errors <- gometh(
+  sig.cpg    = misclassified_ids,
+  all.cpg    = matrixdf_c10_clock_analysis_df_IH$ProbeIDs,
+  collection = "GO",
+  array.type = "EPIC")
+
+top_error_terms <- topGSA(gst_errors, n = 10)
+print(top_error_terms)
+```
+
+**Output — Top 10 GO Terms:**
+
+```
+           ONTOLOGY                                    TERM   N  DE        P.DE         FDR
+GO:0009617       BP                   response to bacterium  64  56 0.001861123           1
+GO:0005102       MF              signaling receptor binding 142 116 0.003127581           1
+GO:0001508       BP                        action potential  17  17 0.004110199           1
+GO:0007218       BP          neuropeptide signaling pathway  16  16 0.004789182           1
+GO:0001906       BP                            cell killing  16  16 0.005572132           1
+GO:0042742       BP           defense response to bacterium  22  21 0.006014938           1
+GO:0040011       BP                              locomotion 131 106 0.008808557           1
+GO:0072659       BP protein localization to plasma membrane  22  21 0.009284409           1
+GO:0006936       BP                      muscle contraction  42  37 0.009650699           1
+GO:1901981       MF  phosphatidylinositol phosphate binding  20  19 0.011844948           1
+```
+
+### Generating GO Enrichment Graph
+
+```{r go-enrichment-plot}
+library(ggplot2)
+library(dplyr)
+
+gorich_plot_data <- topGSA(gst_errors, n = 15) %>%
+  mutate(Term = factor(TERM, levels = rev(TERM)),
+         GeneRatio = DE / N)
+
+goenrich_plot_top15 <- ggplot(gorich_plot_data, aes(x = GeneRatio, y = Term)) + geom_point(aes(size = DE, color = P.DE)) + scale_color_gradient(low = "red", high = "blue") + theme_minimal() + labs(title = "GO Enrichment: Misclassified Probes for Epi IH", subtitle = "Top 15 Biological Terms by Raw P-value", x = "Gene Ratio (DE / N)", y = "Biological Process / Function", size = "Probe Count", color = "P-value") 
+
+ggsave("goenrich_plot_top15.png",
+       plot   = goenrich_plot_top15,
+       width  = 10,
+       height = 8,
+       dpi    = 300)
+```
+
+## Commercial
+
+### Identify Misclassified Probes
+
+```{r misclassified-probes-CO}
+misclassified_probes_df_CO <- matrixdf_c10_clock_analysis_df_CO %>%
+  filter(Epi_Class != Illumina_Class)
+
+misclassified_ids_CO <- misclassified_probes_df_CO$ProbeIDs
+length(misclassified_ids_CO)
+```
+
+**Output:** `1230`
+
+### Run GO Analysis Based on 17K Probes Associated with Age Clock
+
+```{r go-analysis-CO}
+all_probes_CO <- clock_analysis_df$ProbeIDs
+
+gst_errors_CO <- gometh(
+  sig.cpg    = misclassified_ids_CO,
+  all.cpg    = matrixdf_c10_clock_analysis_df_CO$ProbeIDs,
+  collection = "GO",
+  array.type = "EPIC")
+
+top_error_terms_CO <- topGSA(gst_errors_CO, n = 10)
+print(top_error_terms_CO)
+```
+
+**Output — Top 10 GO Terms:**
+
+```
+           ONTOLOGY                                                TERM   N  DE
+GO:0048762       BP                    mesenchymal cell differentiation  29  27
+GO:0098771       BP                           inorganic ion homeostasis  52  45
+GO:0016477       BP                                      cell migration 143 113
+GO:0050801       BP                          monoatomic ion homeostasis  54  46
+GO:0055080       BP                       monoatomic cation homeostasis  54  46
+GO:0040011       BP                                          locomotion 131 103
+GO:0055074       BP                             calcium ion homeostasis  34  30
+GO:0031349       BP             positive regulation of defense response  39  34
+GO:0031345       BP negative regulation of cell projection organization  19  18
+GO:0001837       BP                epithelial to mesenchymal transition  19  18
+                  P.DE FDR
+GO:0048762 0.001974829   1
+GO:0098771 0.002641135   1
+GO:0016477 0.003744580   1
+GO:0050801 0.005113007   1
+GO:0055080 0.005113007   1
+GO:0040011 0.006680243   1
+GO:0055074 0.006901164   1
+GO:0031349 0.007802787   1
+GO:0031345 0.008147444   1
+GO:0001837 0.008664810   1
+```
+
+### Generating GO Enrichment Graph
+
+```{r go-enrichment-plot-CO}
+library(ggplot2)
+library(dplyr)
+
+gorich_plot_data_CO <- topGSA(gst_errors_CO, n = 15) %>%
+  mutate(Term = factor(TERM, levels = rev(TERM)),
+         GeneRatio = DE / N)
+
+goenrich_plot_top15_CO <- ggplot(gorich_plot_data_CO, aes(x = GeneRatio, y = Term)) + geom_point(aes(size = DE, color = P.DE)) + scale_color_gradient(low = "red", high = "blue") + theme_minimal() + labs(title = "GO Enrichment: Misclassified Probes for Epi CO", subtitle = "Top 15 Biological Terms by Raw P-value", x = "Gene Ratio (DE / N)", y = "Biological Process / Function", size = "Probe Count", color = "P-value") 
+
+ggsave("goenrich_plot_top15_CO.png",
+       plot   = goenrich_plot_top15_CO,
+       width  = 10,
+       height = 8,
+       dpi    = 300)
+```
+---
+
+# 6. Distribution Analysis
+
+## Assessing if Normally Distributed
+
+```{r distribution-libraries}
+library(ggplot2)
+library(tidyverse)
+```
+
+```{r distribution-plot}
+plot_long <- clock_analysis_df %>%
+  pivot_longer(cols = c(Avg_beta, Average_CO, Average_IH),
+               names_to  = "Method",
+               values_to = "Beta_Value")
+
+clockprobes_distribution <- ggplot(plot_long,
+                                    aes(x = Beta_Value, color = Method)) +
+  geom_line(stat = "density")
+
+# saving the histogram as a PNG
+ggsave("clockprobes_distribution.png",
+       plot   = clockprobes_distribution,
+       width  = 10,
+       height = 6,
+       dpi    = 300)
+```
+
+---
+
+# 7. Linear Relationship Assessment
+
+As the data is not normally distributed, we assess whether a linear relationship is present.
+
+## Commercial
+
+```{r scatterplot-commercial}
+library(ggplot2)
+
+clockprobes_scatterplotCO <- ggplot(clock_analysis_df,
+                                     aes(x = Avg_beta, y = Average_CO)) +
+  geom_point(alpha = 0.2) +
+  xlim(0, 1) +
+  ylim(0, 1) +
+  labs(
+    title    = "Beta Value Comparison: MBD Commercial vs. Array",
+    subtitle = "Red dashed line indicates perfect agreement (y = x)",
+    x        = "Array (Avg_beta)",
+    y        = "MBD Commercial (Average_CO)"
+  ) +
+  theme_minimal()
+
+ggsave("clockprobes_scatterplotCO.png",
+       plot   = clockprobes_scatterplotCO,
+       width  = 10,
+       height = 6,
+       dpi    = 300)
+```
+
+## In House
+
+```{r scatterplot-inhouse}
+clockprobes_scatterplotIH <- ggplot(clock_analysis_df,
+                                     aes(x = Avg_beta, y = Average_IH)) +
+  geom_point(alpha = 0.1) +
+  theme_minimal() +
+  labs(
+    title    = "Beta Value Comparison: MBD In House vs. Array",
+    subtitle = "Red dashed line indicates perfect agreement (y = x)",
+    x        = "Array (Avg_beta)",
+    y        = "MBD Commercial (Average_IH)"
+  ) +
+  xlim(0, 1) +
+  ylim(0, 1)
+
+ggsave("clockprobes_scatterplotIH.png",
+       plot   = clockprobes_scatterplotIH,
+       width  = 10,
+       height = 6,
+       dpi    = 300)
+```
+
+---
+
+# 8. Correlation Matrix Using Spearman's Rank Correlation
+
+```{r spearman-correlation}
+cor_matrix <- cor(cor_data, method = "spearman", use = "pairwise.complete.obs")
+head(cor_matrix)
+```
+
+**Output:**
+
+```
+                   Array MBD Commercial MBD In House
+Array          1.0000000      0.7536055    0.6574051
+MBD Commercial 0.7536055      1.0000000    0.6988752
+MBD In House   0.6574051      0.6988752    1.0000000
+```
+
+```{r correlation-heatmap}
+library(ggplot2)
+library(reshape2)
+
+# Melt the correlation matrix
+melted_corr <- melt(cor_matrix)
+
+# Create the heatmap
+corr_heatmap <- ggplot(melted_corr, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0) +
+  theme_minimal() +
+  labs(title = "Spearman Correlation Heatmap",
+       x = "", y = "", fill = "Correlation")
+
+ggsave("clockprobes_spearman_matrix.png",
+       plot   = corr_heatmap,
+       width  = 7,
+       height = 6,
+       dpi    = 300)
+```
+
+---
+
