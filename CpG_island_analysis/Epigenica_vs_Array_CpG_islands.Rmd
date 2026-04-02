@@ -1,0 +1,893 @@
+---
+title: "Epigenica vs Illumina Using CpG Islands"
+author: "Zoe dell'Osso"
+date: "March 2026"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: tango
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE, message = FALSE, warning = FALSE)
+```
+
+---
+
+# 1. Extracting CpG island data for Epigenica data
+
+```{bash}
+# Copying bed file with all CpG islands to working directory
+cp ~/EpivsIllumina_analysis/CpG_island.bed .
+
+# Copying bigwig files from D1 R1 to working directory
+cp ~/Epigenica_data/Zoe_analysis/analysis_bam/*Donor1_S1* .
+
+# Copying bigwig files from D1 R2 to working directory
+cp ~/Epigenica_data/Zoe_analysis/analysis_bam/*Donor1_S2* .
+
+# Extracting CpG island data from Epigenica bigwig files — D1 R1
+multiBigwigSummary BED-file \
+  --bwfiles M2_S2_Donor1_S1_pooled.hg19.bw \
+            M3_S3_Donor1_S1_pooled.hg19.bw \
+            M4_S4_Donor1_S1_pooled.hg19.bw \
+  --BED CpG_island.bed \
+  --labels MBDIH Cxxc MBDCO \
+  --outRawCounts Epi_raw_CpGi.tab \
+  -o results.npz
+
+# Extracting CpG island data from Epigenica bigwig files — D1 R2
+multiBigwigSummary BED-file \
+  --bwfiles M2_S2_Donor1_S2_pooled.hg19.bw \
+            M3_S3_Donor1_S2_pooled.hg19.bw \
+            M4_S4_Donor1_S2_pooled.hg19.bw \
+  --BED CpG_island.bed \
+  --labels MBDIH Cxxc MBDCO \
+  --outRawCounts Epi_raw_CpGi_D1R2.tab \
+  -o resultsD1R2.npz
+
+# Checking how many rows are in the tab files
+wc -l Epi_raw_CpGi.tab
+# 27842
+wc -l Epi_raw_CpGi_D1R2.tab
+# 27842
+```
+
+```{r import-epi-data}
+# Importing the tab files into R
+D1_R1_Epi_data <- read.table("Epi_raw_CpGi.tab",    header = TRUE)
+D1_R2_Epi_data <- read.table("Epi_raw_CpGiD1R2.tab", header = TRUE)
+
+# Viewing how the data looks before renaming
+head(D1_R1_Epi_data)
+
+# Adding column names
+colnames(D1_R1_Epi_data) <- c("chr", "Start", "End", "MBDIH",    "CXXC",    "MBDCO")
+colnames(D1_R2_Epi_data) <- c("chr", "Start", "End", "MBDIH_R2", "CXXC_R2", "MBDCO_R2")
+
+# Viewing how the data looks after renaming
+head(D1_R1_Epi_data)
+head(D1_R2_Epi_data)
+
+# Checking the number of rows
+nrow(D1_R1_Epi_data)
+# [1] 27840
+nrow(D1_R2_Epi_data)
+# [1] 27840
+```
+
+**Output — head(D1_R1_Epi_data) before renaming:**
+
+```
+  chr  Start    End MBDIH CXXC MBDCO
+1 chr1 135124 135563     0    0     0
+2 chr1 327790 328229     0    0     0
+3 chr1 437151 438164     0    0     0
+4 chr1 449273 450544     0    0     0
+5 chr1 533219 534114     0    0     0
+6 chr1 544738 546649     0    0     0
+```
+
+**Output — head(D1_R2_Epi_data) after renaming:**
+
+```
+   chr  Start    End MBDIH_R2 CXXC_R2 MBDCO_R2
+1 chr1 135124 135563        0       0        0
+2 chr1 327790 328229        0       0        0
+3 chr1 437151 438164        0       0        0
+4 chr1 449273 450544        0       0        0
+5 chr1 533219 534114        0       0        0
+6 chr1 544738 546649        0       0        0
+```
+
+---
+
+# 2. Calculating beta values for both MBDs
+
+```{r calculate-beta}
+# Load library
+library(dplyr)
+
+# Beta values for in house
+D1_R1_Epi_data$Beta_valueIH    <- D1_R1_Epi_data$MBDIH    / (D1_R1_Epi_data$MBDIH    + D1_R1_Epi_data$CXXC)
+D1_R2_Epi_data$Beta_valueIH_R2 <- D1_R2_Epi_data$MBDIH_R2 / (D1_R2_Epi_data$MBDIH_R2 + D1_R2_Epi_data$CXXC_R2)
+
+# Beta values for commercial
+D1_R1_Epi_data$Beta_valueCO    <- D1_R1_Epi_data$MBDCO    / (D1_R1_Epi_data$MBDCO    + D1_R1_Epi_data$CXXC)
+D1_R2_Epi_data$Beta_valueCO_R2 <- D1_R2_Epi_data$MBDCO_R2 / (D1_R2_Epi_data$MBDCO_R2 + D1_R2_Epi_data$CXXC_R2)
+
+# Testing how many beta values are NaN (no reads captured by both CXXC and MBD)
+# In house
+sum(is.nan(D1_R1_Epi_data$Beta_valueIH))
+# [1] 954
+sum(is.nan(D1_R2_Epi_data$Beta_valueIH_R2))
+# [1] 956
+
+# Commercial
+sum(is.nan(D1_R1_Epi_data$Beta_valueCO))
+# [1] 955
+sum(is.nan(D1_R2_Epi_data$Beta_valueCO_R2))
+# [1] 958
+```
+
+Since the number of CpG islands with NaN values differs between the in-house and commercial MBD, two separate data frames must be created to ensure correct exclusion.
+
+```{r remove-nan-beta}
+# Removing CpG islands with NaN beta values
+
+# In house
+D1_R1_EpiIH_data <- D1_R1_Epi_data %>%
+  filter(!is.na(Beta_valueIH)) %>%
+  select(-Beta_valueCO, -MBDCO)
+
+D1_R2_EpiIH_data <- D1_R2_Epi_data %>%
+  filter(!is.na(Beta_valueIH_R2)) %>%
+  select(-Beta_valueCO_R2, -MBDCO_R2)
+
+# Checking if it worked
+sum(is.nan(D1_R1_EpiIH_data$Beta_valueIH))
+# [1] 0
+nrow(D1_R1_EpiIH_data)
+# [1] 26886
+nrow(D1_R2_EpiIH_data)
+# [1] 26884
+
+# Commercial
+D1_R1_EpiCO_data <- D1_R1_Epi_data %>%
+  filter(!is.na(Beta_valueCO)) %>%
+  select(-Beta_valueIH, -MBDIH)
+
+D1_R2_EpiCO_data <- D1_R2_Epi_data %>%
+  filter(!is.na(Beta_valueCO_R2)) %>%
+  select(-Beta_valueIH_R2, -MBDIH_R2)
+
+# Checking if it worked
+sum(is.nan(D1_R1_EpiCO_data$Beta_valueCO))
+# [1] 0
+nrow(D1_R1_EpiCO_data)
+# [1] 26885
+nrow(D1_R2_EpiCO_data)
+# [1] 26882
+```
+
+The number of rows decreases in line with the NaN values that were identified and removed.
+
+---
+
+# 3. Identifying CpG islands to exclude from Epigenica data
+
+## 3.1 Filtering out unknown chromosome locations
+
+```{r filter-unknown-chr}
+# Load library
+library(dplyr)
+
+# Removing CpG islands on unknown chromosome locations
+
+# In house
+D1_R1_EpiIH_data <- D1_R1_EpiIH_data %>% filter(!grepl("chrUn", chr))
+D1_R2_EpiIH_data <- D1_R2_EpiIH_data %>% filter(!grepl("chrUn", chr))
+
+# Checking if it worked
+nrow(D1_R1_EpiIH_data)
+# [1] 26790
+nrow(D1_R2_EpiIH_data)
+# [1] 26788
+
+# Commercial
+D1_R1_EpiCO_data <- D1_R1_EpiCO_data %>% filter(!grepl("chrUn", chr))
+D1_R2_EpiCO_data <- D1_R2_EpiCO_data %>% filter(!grepl("chrUn", chr))
+
+# Checking if it worked
+nrow(D1_R1_EpiCO_data)
+# [1] 26789
+nrow(D1_R2_EpiCO_data)
+# [1] 26786
+```
+
+A total of 96 CpG islands were removed from both the in-house and commercial data frames.
+
+## 3.2 Histogram of read count vs number of CpG islands
+
+```{r readcount-histogram}
+# Load libraries
+library(ggplot2)
+library(dplyr)
+
+# For in house — calculating the sum of read counts (Epigenica IH and CXXC)
+D1_R1_EpiIH_data$sum_mbdih_n_cxxc <- D1_R1_EpiIH_data$MBDIH + D1_R1_EpiIH_data$CXXC
+
+# Generating histogram with filtered sum, 30 binwidth
+readcounts_distribution <- ggplot(D1_R1_EpiIH_data, aes(x = sum_mbdih_n_cxxc)) +
+  geom_histogram(fill = "red", color = "white", binwidth = 30) +
+  labs(title = "Distribution of Combined Read Counts",
+       x     = "Total read counts (MBD in house and CXXC)",
+       y     = "Number of Islands (Frequency)") +
+  theme_minimal()
+
+# Saving the histogram as a PNG
+ggsave("Distribution_readcounts_mbhih_n_cxxc.png",
+       plot = readcounts_distribution, width = 10, height = 6, dpi = 300)
+
+# For commercial — calculating the sum of read counts (Epigenica CO and CXXC)
+D1_R1_EpiCO_data$sum_mbdco_n_cxxc <- D1_R1_EpiCO_data$MBDCO + D1_R1_EpiCO_data$CXXC
+
+# Generating histogram with filtered sum, 30 binwidth
+readcounts_distribution_CO <- ggplot(D1_R1_EpiCO_data, aes(x = sum_mbdco_n_cxxc)) +
+  geom_histogram(fill = "red", color = "white", binwidth = 30) +
+  labs(title = "Distribution of Combined Read Counts",
+       x     = "Total read counts (MBD commercial and CXXC)",
+       y     = "Number of Islands (Frequency)") +
+  theme_minimal()
+
+# Saving the histogram as a PNG
+ggsave("Distribution_readcounts_mbhco_n_cxxc.png",
+       plot = readcounts_distribution_CO, width = 10, height = 6, dpi = 300)
+```
+
+---
+
+# 4. Normalization of Epigenica beta values
+
+```{r normalize-epi-beta}
+# Load libraries
+library(limma)
+library(ggplot2)
+library(dplyr)
+
+# In house — merging the replicates
+D1_EpiIH_data <- merge(D1_R1_EpiIH_data, D1_R2_EpiIH_data, by = c("chr", "Start", "End"))
+
+# Ensuring beta values are numeric (columns 6 and 11)
+matrix_D1_EpiIH_data <- as.matrix(D1_EpiIH_data)
+cols_to_norm          <- matrix_D1_EpiIH_data[, c(6, 11)]
+numeric_cols          <- apply(cols_to_norm, 2, as.numeric)
+
+# Normalizing using cyclic loess
+norm_D1_EpiIH_data <- normalizeBetweenArrays(numeric_cols, method = "cyclicloess")
+
+# Putting the normalized beta values back into the data frame
+D1_EpiIH_data[, c(6, 11)] <- norm_D1_EpiIH_data
+
+# Commercial — merging the replicates
+D1_EpiCO_data <- merge(D1_R1_EpiCO_data, D1_R2_EpiCO_data, by = c("chr", "Start", "End"))
+
+# Ensuring beta values are numeric (columns 6 and 11)
+matrix_D1_EpiCO_data <- as.matrix(D1_EpiCO_data)
+cols_to_norm_CO       <- matrix_D1_EpiCO_data[, c(6, 11)]
+numeric_cols_CO       <- apply(cols_to_norm_CO, 2, as.numeric)
+
+# Normalizing using cyclic loess
+norm_D1_EpiCO_data <- normalizeBetweenArrays(numeric_cols_CO, method = "cyclicloess")
+
+# Putting the normalized beta values back into the data frame
+D1_EpiCO_data[, c(6, 11)] <- norm_D1_EpiCO_data
+```
+
+## 4.1 Overlaying histograms — read counts vs beta values
+
+### In House
+
+```{r overlay-hist-ih}
+# Load libraries
+library(ggplot2)
+library(tidyr)
+
+# Converting df to long format for the histogram
+longdf_D1_EpiIH_data <- D1_EpiIH_data %>%
+  pivot_longer(cols = c(MBDIH, CXXC), names_to = "Method", values_to = "Read_Counts")
+
+# Creating histogram
+histogram_cxxc_mbdih <- ggplot(longdf_D1_EpiIH_data,
+                                aes(x = Beta_valueIH, weight = Read_Counts, fill = Method)) +
+  geom_histogram(position = "identity", alpha = 0.5, bins = 50, color = "white") +
+  scale_fill_manual(values = c("MBDIH" = "#E41A1C", "CXXC" = "#377EB8")) +
+  labs(title = "Overlaying Histogram: Total Read Counts vs Beta Values",
+       x     = "Beta Value",
+       y     = "Total Read Counts (MBD in house + CXXC)") +
+  theme_minimal()
+
+# Saving the histogram as a PNG
+ggsave("Histogram_D1_R1_readcounts_MBDIH_n_CXXC_vs_bvalue.png",
+       plot = histogram_cxxc_mbdih, width = 10, height = 6, dpi = 300)
+```
+
+### Commercial
+
+```{r overlay-hist-co}
+# Load libraries
+library(ggplot2)
+library(tidyr)
+
+# Converting df to long format for the histogram
+longdf_D1_EpiCO_data <- D1_EpiCO_data %>%
+  pivot_longer(cols = c(MBDCO, CXXC), names_to = "Method", values_to = "Read_Counts")
+
+# Creating histogram
+histogram_cxxc_mbdco <- ggplot(longdf_D1_EpiCO_data,
+                                aes(x = Beta_valueCO, weight = Read_Counts, fill = Method)) +
+  geom_histogram(position = "identity", alpha = 0.5, bins = 50, color = "white") +
+  scale_fill_manual(values = c("MBDCO" = "#E41A1C", "CXXC" = "#377EB8")) +
+  labs(title = "Overlaying Histogram: Total Read Counts vs Beta Values",
+       x     = "Beta Value",
+       y     = "Total Read Counts (MBD commercial + CXXC)") +
+  theme_minimal()
+
+# Saving the histogram as a PNG
+ggsave("Histogram_D1_R1_readcounts_MBDCO_n_CXXC_vs_bvalue.png",
+       plot = histogram_cxxc_mbdco, width = 10, height = 6, dpi = 300)
+```
+
+---
+
+# 5. Illumina Array data processing
+
+## 5.1 Normalizing Illumina values with NOOB
+
+```{r noob-normalization}
+# Load library
+library(minfi)
+
+# Creating a path to the folder that has the Illumina data
+input_dir <- "/home/ubuntu/Illumina_850k_DNAmethylation_data_donors/data/"
+
+# Creating a data frame from sample information
+targets <- read.metharray.sheet(input_dir)
+head(targets)
+
+# Loading raw methylation data into R
+rgSet <- read.metharray.exp(base = input_dir)
+
+# Normalizing the data with Noob
+mSet <- preprocessNoob(rgSet)
+
+# Creating matrix with beta values for CpG regions
+noob_beta <- getBeta(mSet)
+head(noob_beta)
+
+# Changing column names
+colnames(noob_beta) <- targets$Sample_Name
+head(noob_beta)
+
+# Saving beta values to move to CpG islands analysis directory
+write.csv(noob_beta, "Final_NOOB_Normalized_Beta_Matrix.csv")
+```
+
+```{bash}
+cp ~/Illumina_850k_DNAmethylation_data_donors/Zoe_analysis/Final_NOOB_Normalized_Beta_Matrix.csv .
+```
+
+```{r import-noob}
+# Importing the NOOB normalized beta values
+noob_beta <- read.csv("Final_NOOB_Normalized_Beta_Matrix.csv")
+```
+
+**Output — head(targets):**
+
+```
+  Sample_Name Sample_Group Sex Age_predicted  Array        Slide
+1          D1        Donor   M            54 R01C01 205061410164
+2          D2        Donor   M            52 R02C01 205061410164
+3          D3        Donor   M            62 R03C01 205061410164
+4          D4        Donor   M            47 R04C01 205061410164
+```
+
+**Output — head(noob_beta) after renaming columns:**
+
+```
+           D1         D2         D3         D4
+cg18478105 0.01489857 0.01550465 0.01977528 0.01706442
+cg09835024 0.03834064 0.04149480 0.04331674 0.03732362
+cg14361672 0.91584946 0.92746948 0.92231030 0.91727131
+cg01763666 0.72587764 0.73984052 0.78786225 0.82832947
+cg12950382 0.94589055 0.94160644 0.94003364 0.93680127
+cg02115394 0.06638772 0.07629724 0.10196685 0.10088353
+```
+
+## 5.2 Getting the Illumina beta values for each CpG island
+
+```{r illumina-cpg-islands}
+# Load libraries
+library(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
+library(dplyr)
+
+# Extracting CpG island data with Illumina annotations
+data(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
+data(Islands.UCSC)
+force(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
+force(Islands.UCSC)
+island_df <- as.data.frame(Islands.UCSC)
+head(island_df)
+
+# Making Illumina probes the row names
+rownames(noob_beta) <- noob_beta$X
+
+# Merging the Illumina beta data with the island data by row names
+noob_ill_islands <- merge(island_df, noob_beta, by = 0)
+head(noob_ill_islands)
+
+# Checking number of rows
+nrow(noob_ill_islands)
+# [1] 865859
+
+# Filtering to keep only probes within a CpG island
+noob_ill_islands <- noob_ill_islands %>%
+  filter(Relation_to_Island == "Island")
+head(noob_ill_islands)
+
+# Checking number of rows after filtering
+nrow(noob_ill_islands)
+# [1] 161441
+
+# Extracting only Donor 1
+D1_noob_islands <- noob_ill_islands[, c("Row.names", "Islands_Name", "D1")]
+
+# Grouping rows by Island_Name
+D1_noob_islands <- D1_noob_islands %>% group_by(Islands_Name)
+
+# Checking number of different CpG islands captured
+n_groups(D1_noob_islands)
+# [1] 26594
+
+# Averaging the D1 values for each group
+D1_noob_islands_averages <- D1_noob_islands %>%
+  summarise(Average_D1 = mean(D1, na.rm = TRUE))
+
+# Checking number of rows
+nrow(D1_noob_islands_averages)
+# [1] 26594
+```
+
+**Output — head(noob_ill_islands) after island filtering:**
+
+```
+  Row.names              Islands_Name Relation_to_Island         D1         D2         D3         D4
+1 cg00000622   chr15:23033933-23034710             Island 0.02359467 0.02395984 0.02536818 0.02846882
+2 cg00000658  chr9:139997846-139998048             Island 0.80039323 0.77342384 0.79437498 0.68826105
+3 cg00000734  chr3:128902134-128902978             Island 0.04318268 0.06751227 0.07456778 0.06830980
+4 cg00000769 chr12:124086217-124087015             Island 0.01214208 0.01403837 0.01402864 0.01658373
+5 cg00000807    chr2:23913308-23913569             Island 0.75326514 0.77810563 0.75014132 0.80778165
+6 cg00000924     chr11:2720410-2722087             Island 0.52557253 0.48536452 0.52401268 0.47780166
+```
+
+**Output — head(D1_noob_islands_averages):**
+
+```
+# A tibble: 6 × 2
+  Islands_Name                  Average_D1
+  <chr>                              <dbl>
+1 chr10:100028204-100028508         0.0885
+2 chr10:100227438-100227832         0.0379
+3 chr10:100992156-100992687         0.129
+4 chr10:100993820-100994188         0.0172
+5 chr10:101089010-101090655         0.369
+6 chr10:101190451-101190925         0.0659
+```
+
+---
+
+# 6. Overlaying Histograms — Beta Values for Epigenica and Illumina
+
+## 6.1 Merging beta value data into 1 data frame
+
+```{r merge-beta-values}
+# Load library
+library(dplyr)
+
+# Creating Islands_Name column from chromosome coordinates in Epi data sets
+D1_EpiIH_data <- D1_EpiIH_data %>%
+  mutate(Islands_Name = paste0(chr, ":", Start, "-", End))
+
+D1_EpiCO_data <- D1_EpiCO_data %>%
+  mutate(Islands_Name = paste0(chr, ":", Start, "-", End))
+
+# Joining data sets using inner_join — only Island_Names present in all are kept
+D1_R1_merged_data <- D1_EpiIH_data %>%
+  inner_join(D1_EpiCO_data,            by = "Islands_Name") %>%
+  inner_join(D1_noob_islands_averages, by = "Islands_Name") %>%
+  select(Islands_Name, Average_D1, Beta_valueIH, Beta_valueCO)
+```
+
+## 6.2 In House vs Illumina
+
+```{r hist-epiIH-illumina}
+# Load libraries
+library(ggplot2)
+library(tidyr)
+
+# Creating a long df for the histogram
+longdf_D1_R1_merged_cpgi_epiIH <- pivot_longer(
+  D1_R1_merged_data,
+  cols      = c("Average_D1", "Beta_valueIH"),
+  names_to  = "Variable",
+  values_to = "Value")
+
+# Plotting histogram
+histogram_D1_R1_merged_cpgi_epiIH <- ggplot(
+  longdf_D1_R1_merged_cpgi_epiIH,
+  aes(x = Value, fill = Variable)) +
+  geom_histogram(bins = 30, color = "white", alpha = 0.5, position = "identity") +
+  scale_fill_manual(
+    values = c("Average_D1"   = "#F8766D", "Beta_valueIH" = "#619CFF"),
+    labels = c("Average_D1"   = "Illumina",  "Beta_valueIH" = "Epigenica IH")) +
+  labs(title = "Distribution of Beta Values for Illumina and Epigenica IH",
+       x     = "Beta Values",
+       y     = "Frequency (Number of CpG Islands)",
+       fill  = "Technologies") +
+  theme_minimal()
+
+# Saving as PNG
+ggsave("Histogram_D1_R1_epiIH_Ill_bvalues_CpGislands_noob.png",
+       plot = histogram_D1_R1_merged_cpgi_epiIH, width = 10, height = 6, dpi = 300)
+```
+
+## 6.3 Commercial vs Illumina
+
+```{r hist-epiCO-illumina}
+# Load libraries
+library(ggplot2)
+library(tidyr)
+
+# Creating a long df for the histogram
+longdf_D1_R1_merged_cpgi_epiCO <- pivot_longer(
+  D1_R1_merged_data,
+  cols      = c("Average_D1", "Beta_valueCO"),
+  names_to  = "Variable",
+  values_to = "Value")
+
+# Plotting histogram
+histogram_D1_R1_merged_cpgi_epiCO <- ggplot(
+  longdf_D1_R1_merged_cpgi_epiCO,
+  aes(x = Value, fill = Variable)) +
+  geom_histogram(bins = 30, color = "white", alpha = 0.5, position = "identity") +
+  scale_fill_manual(
+    values = c("Average_D1"  = "#F8766D", "Beta_valueCO" = "#619CFF"),
+    labels = c("Average_D1"  = "Illumina",  "Beta_valueCO" = "Epigenica CO")) +
+  labs(title = "Distribution of Beta Values for Illumina and Epigenica CO",
+       x     = "Beta Values",
+       y     = "Frequency (Number of CpG Islands)",
+       fill  = "Technologies") +
+  theme_minimal()
+
+# Saving as PNG
+ggsave("Histogram_D1_R1_epiCO_Ill_bvalues_CpGislands_noob.png",
+       plot = histogram_D1_R1_merged_cpgi_epiCO, width = 10, height = 6, dpi = 300)
+```
+
+## 6.4 In House vs Commercial
+
+```{r hist-epiIH-epiCO}
+# Load libraries
+library(ggplot2)
+library(tidyr)
+
+# Creating a long df for the histogram
+longdf_D1_R1_merged_cpgi_epiCO_and_epiIH <- pivot_longer(
+  D1_R1_merged_data,
+  cols      = c("Beta_valueIH", "Beta_valueCO"),
+  names_to  = "Variable",
+  values_to = "Value")
+
+# Plotting histogram
+histogram_D1_R1_merged_cpgi_epiCO_and_epiIH <- ggplot(
+  longdf_D1_R1_merged_cpgi_epiCO_and_epiIH,
+  aes(x = Value, fill = Variable)) +
+  geom_histogram(bins = 30, color = "white", alpha = 0.5, position = "identity") +
+  scale_fill_manual(
+    values = c("Beta_valueIH" = "#F8766D", "Beta_valueCO" = "#619CFF"),
+    labels = c("Beta_valueIH" = "Epigenica IH", "Beta_valueCO" = "Epigenica CO")) +
+  labs(title = "Distribution of Beta Values for Epigenica IH and CO",
+       x     = "Beta Values",
+       y     = "Frequency (Number of CpG Islands)",
+       fill  = "Technologies") +
+  theme_minimal()
+
+# Saving as PNG
+ggsave("Histogram_D1_R1_epiIH_epiCO_bvalues_CpGislands.png",
+       plot = histogram_D1_R1_merged_cpgi_epiCO_and_epiIH, width = 10, height = 6, dpi = 300)
+```
+
+---
+
+# 7. Confusion Matrix
+
+## 7.1 Three Classes
+
+### In House
+
+```{r cm-3class-ih}
+# Load libraries
+library(dplyr)
+library(tidyr)
+library(caret)
+library(ggplot2)
+
+# Creating the 3 classes with 0.33 intervals
+my_breaks2 <- c(0, 0.33, 0.66, 1.0)
+my_labels2 <- c("Class 1", "Class 2", "Class 3")
+
+# Adding classes to the beta values
+matrixdf_class3_D1_R1_epiIH_ill <- D1_R1_merged_data %>%
+  mutate(
+    Epi_Class     = cut(Beta_valueIH, breaks = my_breaks2, labels = my_labels2, include.lowest = TRUE),
+    Illumina_Class = cut(Average_D1,   breaks = my_breaks2, labels = my_labels2, include.lowest = TRUE))
+
+# Visualizing the classes assigned to the beta values
+head(matrixdf_class3_D1_R1_epiIH_ill)
+
+# Making confusion matrix
+conf_matrix_class3_D1_R1_epiIH_ill <- confusionMatrix(
+  data      = matrixdf_class3_D1_R1_epiIH_ill$Epi_Class,
+  reference = matrixdf_class3_D1_R1_epiIH_ill$Illumina_Class)
+
+print(conf_matrix_class3_D1_R1_epiIH_ill)
+
+# Plotting the confusion matrix
+plotdata_cm_class3_D1_R1_epiIH_ill <- as.data.frame(conf_matrix_class3_D1_R1_epiIH_ill$table)
+
+plot_cm_class3_D1_R1_epiIH_ill <- ggplot(
+  plotdata_cm_class3_D1_R1_epiIH_ill,
+  aes(x = Prediction, y = Reference, fill = Freq)) +
+  geom_tile(color = "white", lwd = 1) +
+  geom_text(aes(label = Freq), color = "black", size = 5) +
+  scale_fill_gradient(low = "#9ecae1", high = "#084594") +
+  labs(x     = "Epi IH",
+       y     = "Illumina",
+       title = "Confusion Matrix: Epi IH vs Illumina",
+       fill  = "Count") +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12, face = "bold"),
+        title     = element_text(size = 14, face = "bold"))
+
+# Saving as a PNG
+ggsave("D1_R1_confusion_matrix_c3_epiIH_ill_noob.png",
+       plot = plot_cm_class3_D1_R1_epiIH_ill, width = 7, height = 6, dpi = 300)
+```
+
+**Output — head(matrixdf_class3_D1_R1_epiIH_ill):**
+
+```
+              Islands_Name Average_D1 Beta_valueIH Beta_valueCO Epi_Class Illumina_Class
+1   chr1:10003165-10003585 0.08212839  0.018950395  0.012946372   Class 1        Class 1
+2     chr1:1002663-1005318 0.41891865  0.530955968  0.148345027   Class 2        Class 2
+3 chr1:100315420-100316009 0.05619820  0.009532714  0.006069872   Class 1        Class 1
+4 chr1:100435297-100436070 0.10577649  0.013251458  0.010354383   Class 1        Class 1
+5 chr1:100503482-100504404 0.04831715  0.015095061  0.002821707   Class 1        Class 1
+6   chr1:10057121-10058108 0.13466606  0.035888133  0.018354921   Class 1        Class 1
+```
+
+**Output — Confusion matrix (3 classes, In House):**
+
+```
+Confusion Matrix and Statistics
+
+          Reference
+Prediction Class 1 Class 2 Class 3
+   Class 1   16085    1056      14
+   Class 2     107     576     106
+   Class 3      11     772    6199
+
+Overall Statistics
+               Accuracy : 0.9171
+                 95% CI : (0.9136, 0.9205)
+    No Information Rate : 0.65
+    P-Value [Acc > NIR] : < 2.2e-16
+                  Kappa : 0.8268
+ Mcnemar's Test P-Value : < 2.2e-16
+
+Statistics by Class:
+                     Class: Class 1 Class: Class 2 Class: Class 3
+Sensitivity                  0.9927        0.23960         0.9810
+Specificity                  0.8773        0.99054         0.9579
+Pos Pred Value               0.9376        0.73004         0.8879
+Neg Pred Value               0.9848        0.92427         0.9933
+Prevalence                   0.6500        0.09645         0.2535
+Detection Rate               0.6453        0.02311         0.2487
+Detection Prevalence         0.6882        0.03165         0.2801
+Balanced Accuracy            0.9350        0.61507         0.9695
+```
+
+### Commercial
+
+```{r cm-3class-co}
+# Load libraries
+library(dplyr)
+library(tidyr)
+library(caret)
+library(ggplot2)
+
+# Creating the 3 classes with 0.33 intervals
+my_breaks2 <- c(0, 0.33, 0.66, 1.0)
+my_labels2 <- c("Class 1", "Class 2", "Class 3")
+
+# Adding classes to the beta values
+matrixdf_class3_D1_R1_epiCO_ill <- D1_R1_merged_data %>%
+  mutate(
+    Epi_Class      = cut(Beta_valueCO, breaks = my_breaks2, labels = my_labels2, include.lowest = TRUE),
+    Illumina_Class = cut(Average_D1,   breaks = my_breaks2, labels = my_labels2, include.lowest = TRUE))
+
+# Visualizing the classes assigned to the beta values
+head(matrixdf_class3_D1_R1_epiCO_ill)
+
+# Making confusion matrix
+conf_matrix_class3_D1_R1_epiCO_ill <- confusionMatrix(
+  data      = matrixdf_class3_D1_R1_epiCO_ill$Epi_Class,
+  reference = matrixdf_class3_D1_R1_epiCO_ill$Illumina_Class)
+
+print(conf_matrix_class3_D1_R1_epiCO_ill)
+
+# Plotting the confusion matrix
+plotdata_cm_class3_D1_R1_epiCO_ill <- as.data.frame(conf_matrix_class3_D1_R1_epiCO_ill$table)
+
+plot_cm_class3_D1_R1_epiCO_ill <- ggplot(
+  plotdata_cm_class3_D1_R1_epiCO_ill,
+  aes(x = Prediction, y = Reference, fill = Freq)) +
+  geom_tile(color = "white", lwd = 1) +
+  geom_text(aes(label = Freq), color = "black", size = 5) +
+  scale_fill_gradient(low = "#9ecae1", high = "#084594") +
+  labs(x     = "Epi CO",
+       y     = "Illumina",
+       title = "Confusion Matrix: Epi CO vs Illumina",
+       fill  = "Count") +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12, face = "bold"),
+        title     = element_text(size = 14, face = "bold"))
+
+# Saving as a PNG
+ggsave("D1_R1_confusion_matrix_c3_epiCO_ill_noob.png",
+       plot = plot_cm_class3_D1_R1_epiCO_ill, width = 7, height = 6, dpi = 300)
+```
+
+**Output — Confusion matrix (3 classes, Commercial):**
+
+```
+Confusion Matrix and Statistics
+
+          Reference
+Prediction Class 1 Class 2 Class 3
+   Class 1   15760    1363     114
+   Class 2       8     318     443
+   Class 3       2     163    6156
+
+Overall Statistics
+               Accuracy : 0.914
+                 95% CI : (0.9104, 0.9175)
+    No Information Rate : 0.6483
+    P-Value [Acc > NIR] : < 2.2e-16
+                  Kappa : 0.8156
+ Mcnemar's Test P-Value : < 2.2e-16
+
+Statistics by Class:
+                     Class: Class 1 Class: Class 2 Class: Class 3
+Sensitivity                  0.9994        0.17245         0.9170
+Specificity                  0.8274        0.97994         0.9906
+Pos Pred Value               0.9143        0.41352         0.9739
+Neg Pred Value               0.9986        0.93522         0.9691
+Prevalence                   0.6483        0.07580         0.2759
+Detection Rate               0.6478        0.01307         0.2531
+Detection Prevalence         0.7086        0.03161         0.2598
+Balanced Accuracy            0.9134        0.57620         0.9538
+```
+
+## 7.2 Ten Classes
+
+### In House
+
+```{r cm-10class-ih}
+# Load libraries
+library(dplyr)
+library(tidyr)
+library(caret)
+library(ggplot2)
+
+# Creating 10 classes with 0.1 intervals
+my_breaks3 <- c(0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0)
+my_labels3 <- c("Class 1", "Class 2", "Class 3", "Class 4", "Class 5",
+                 "Class 6", "Class 7", "Class 8", "Class 9", "Class 10")
+
+# Classifying the beta values into 10 classes
+matrixdf_class10_D1_R1_epiIH_ill <- D1_R1_merged_data %>%
+  mutate(
+    Epi_Class      = cut(Beta_valueIH, breaks = my_breaks3, labels = my_labels3, include.lowest = TRUE),
+    Illumina_Class = cut(Average_D1,   breaks = my_breaks3, labels = my_labels3, include.lowest = TRUE))
+
+# Making confusion matrix
+conf_matrix_class10_D1_R1_epiIH_ill <- confusionMatrix(
+  data      = matrixdf_class10_D1_R1_epiIH_ill$Epi_Class,
+  reference = matrixdf_class10_D1_R1_epiIH_ill$Illumina_Class)
+
+# Converting the confusion matrix table into a df
+plotdata_cm_class10_D1_R1_epiIH_ill <- as.data.frame(conf_matrix_class10_D1_R1_epiIH_ill$table)
+
+# Plotting the confusion matrix
+plot_cm_class10_D1_R1_epiIH_ill <- ggplot(
+  plotdata_cm_class10_D1_R1_epiIH_ill,
+  aes(x = Prediction, y = Reference, fill = Freq)) +
+  geom_tile(color = "white", lwd = 1) +
+  geom_text(aes(label = Freq), color = "black", size = 3.5) +
+  scale_fill_gradient(low = "#ebf3fb", high = "#3182bd") +
+  labs(x     = "Epi IH",
+       y     = "Illumina",
+       title = "Confusion Matrix: Epi IH vs Illumina",
+       fill  = "Count") +
+  theme_minimal() +
+  theme(axis.text    = element_text(angle = 45, vjust = 1, hjust = 1),
+        title        = element_text(size = 14, face = "bold"),
+        aspect.ratio = 1)
+
+# Saving as a PNG
+ggsave("D1_R1_confusion_matrix_c10_epiIH_ill_noob.png",
+       plot = plot_cm_class10_D1_R1_epiIH_ill, width = 7, height = 6, dpi = 300)
+```
+
+### Commercial
+
+```{r cm-10class-co}
+# Load libraries
+library(dplyr)
+library(tidyr)
+library(caret)
+library(ggplot2)
+
+# Creating 10 classes with 0.1 intervals
+my_breaks3 <- c(0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0)
+my_labels3 <- c("Class 1", "Class 2", "Class 3", "Class 4", "Class 5",
+                 "Class 6", "Class 7", "Class 8", "Class 9", "Class 10")
+
+# Classifying the beta values into 10 classes
+matrixdf_class10_D1_R1_epiCO_ill <- D1_R1_merged_data %>%
+  mutate(
+    Epi_Class      = cut(Beta_valueCO, breaks = my_breaks3, labels = my_labels3, include.lowest = TRUE),
+    Illumina_Class = cut(Average_D1,   breaks = my_breaks3, labels = my_labels3, include.lowest = TRUE))
+
+# Making confusion matrix
+conf_matrix_class10_D1_R1_epiCO_ill <- confusionMatrix(
+  data      = matrixdf_class10_D1_R1_epiCO_ill$Epi_Class,
+  reference = matrixdf_class10_D1_R1_epiCO_ill$Illumina_Class)
+
+# Converting the confusion matrix table into a df
+plotdata_cm_class10_D1_R1_epiCO_ill <- as.data.frame(conf_matrix_class10_D1_R1_epiCO_ill$table)
+
+# Plotting the confusion matrix
+plot_cm_class10_D1_R1_epiCO_ill <- ggplot(
+  plotdata_cm_class10_D1_R1_epiCO_ill,
+  aes(x = Prediction, y = Reference, fill = Freq)) +
+  geom_tile(color = "white", lwd = 1) +
+  geom_text(aes(label = Freq), color = "black", size = 3.5) +
+  scale_fill_gradient(low = "#ebf3fb", high = "#3182bd") +
+  labs(x     = "Epi CO",
+       y     = "Illumina",
+       title = "Confusion Matrix: Epi CO vs Illumina",
+       fill  = "Count") +
+  theme_minimal() +
+  theme(axis.text    = element_text(angle = 45, vjust = 1, hjust = 1),
+        title        = element_text(size = 14, face = "bold"),
+        aspect.ratio = 1)
+
+# Saving as a PNG
+ggsave("D1_R1_confusion_matrix_c10_epiCO_ill_noob.png",
+       plot = plot_cm_class10_D1_R1_epiCO_ill, width = 7, height = 6, dpi = 300)
+```
